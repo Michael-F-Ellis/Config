@@ -146,3 +146,88 @@ func TestUniqueKeyMatchOf(t *testing.T) {
 		})
 	}
 }
+func TestConfig_Update(t *testing.T) {
+	tests := []struct {
+		name   string
+		config Config
+		update Config
+		want   Config
+	}{
+		{
+			name:   "Update with scalars",
+			config: Config{"x": 1, "y": 2, "key1": map[string]interface{}{"nestedKey": "value1"}, "key2": []interface{}{1, 2, 3}},
+			update: Config{"y": 3, "z": 4},
+			want:   Config{"x": 1, "y": 3, "z": 4, "key1": map[string]interface{}{"nestedKey": "value1"}, "key2": []interface{}{1, 2, 3}},
+		},
+		{
+			name:   "Add nested map",
+			config: Config{"a": 1},
+			update: Config{"key1": map[string]any{"k1": "newv1", "k3": "v3"}},
+			want:   Config{"a": 1, "key1": map[string]any{"k1": "newv1", "k3": "v3"}},
+		},
+		{
+			name:   "Update nested maps",
+			config: Config{"key1": map[string]any{"k1": "v1", "k2": "v2"}},
+			update: Config{"key1": map[string]any{"k1": "newv1", "k3": "v3"}},
+			want:   Config{"key1": map[string]any{"k1": "newv1", "k2": "v2", "k3": "v3"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.config.Update(tt.update)
+			if diff := deep.Equal(tt.config, tt.want); diff != nil {
+				t.Errorf("Config.Update() = %v, want %v", diff, nil)
+			}
+		})
+	}
+}
+func TestConfig_Get(t *testing.T) {
+	cfg := Config{
+		"key1": "value1",
+		"key2": map[string]interface{}{
+			"nestedKey": "value2",
+		},
+		"key3": []interface{}{1, 2, 3},
+	}
+
+	tests := []struct {
+		name   string
+		keys   []string
+		want   any
+		exists bool
+	}{
+		{
+			name:   "Get scalar",
+			keys:   []string{"key1"},
+			want:   "value1",
+			exists: true,
+		},
+		{
+			name:   "Get nested key",
+			keys:   []string{"key2", "nestedKey"},
+			want:   "value2",
+			exists: true,
+		},
+		{
+			name:   "Get array",
+			keys:   []string{"key3"},
+			want:   []interface{}{1, 2, 3},
+			exists: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := cfg.Get(tt.keys...)
+			if ok != tt.exists {
+				t.Errorf("Config.Get(), exists =%v, want %v", got, tt.exists)
+			}
+			if ok {
+				if diff := deep.Equal(got, tt.want); diff != nil {
+					t.Errorf("Config.Get() = %v", diff)
+				}
+			}
+		})
+	}
+}

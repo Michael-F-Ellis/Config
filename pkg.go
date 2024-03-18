@@ -63,12 +63,29 @@ func (c *Config) Read(filepath string) (err error) {
 
 // Update updates a target configuration with the values from another
 // configuration (source). If a key exists only in the source configuration,
-// It is added to targer. If a key exists in both configurations, the value
+// It is added to target. If a key exists in both configurations, the value
 // from the source configuration is used. Keys that are only present in the
-// target configuration are not affected.
+// target configuration are not affected. Map values are updated recursively.
 func (c Config) Update(source Config) {
 	for k, v := range source {
-		c[k] = v
+		switch v := v.(type) {
+		case map[string]any:
+			if _, ok := c[k]; ok {
+				// If the key exists in both configurations, update the target
+				// recursively.
+				tmp := Config(c[k].(map[string]any))
+				tmp.Update(Config(v))
+			} else {
+				// If the key only exists in the source configuration, add it to
+				// the target
+				c[k] = v
+			}
+		// If the value is not a map, i.e. a number, string, bool, null or array
+		// just add it to the target configuration, replacing the value if the
+		// key already exists.
+		default:
+			c[k] = v
+		}
 	}
 }
 
@@ -94,6 +111,22 @@ func (c Config) HasKeyNested(keys ...string) bool {
 	}
 
 	return true
+}
+
+// Get returns the value of a (nested) key in the configuration and a boolean
+// indicating whether the key exists.
+func (c Config) Get(keys ...string) (value any, ok bool) {
+	nestedMap := c
+	for i, key := range keys {
+		value, ok = nestedMap[key]
+		if !ok {
+			return
+		}
+		if i < len(keys)-1 {
+			nestedMap = value.(map[string]any)
+		}
+	}
+	return
 }
 
 // UniqueKeyMatchOf returns the unique key, if any, that matches the given

@@ -27,6 +27,7 @@ cfg := Config{
 			"garply": "waldo",
 			"fred":   42.42,
 		}
+	}
 // Serializing
 err := cfg.Write("some/path/myconfig.json")
 
@@ -41,6 +42,9 @@ has := cfg.HasKey("baz") // true
 
 // Check nested key existence
 has = cfg.HasKeyNested("grault", "fred") // true
+
+// Get the value of a nested key
+v, ok := cfg.Get("g_rault", "garply") // waldo, true
 
 // Validate and use a shortcut
 s := cfg.UniqueMatchOf("GR", '_') // g_rault matches
