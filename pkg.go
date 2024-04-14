@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"unicode"
 )
@@ -17,11 +18,30 @@ import (
 // serialized to a file in JSON format.
 type Config map[string]any
 
+// ConfigFromString returns a config from a string
+// The string should be in the form of a JSON object.
+// Opening and closing braces are optional.
+func ConfigFromString(s string) (map[string]any, error) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "{") {
+		s = "{" + s
+	}
+	if !strings.HasSuffix(s, "}") {
+		s = s + "}"
+	}
+	var c = map[string]any{}
+	err := json.Unmarshal([]byte(s), &c)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // Write writes a configuration to a file as a JSON string.  Write returns and
 // error if the configuration cannot be serialized or if the file cannot be
 // written.
-func (c Config) Write(filepath string) (err error) {
-	text, err := json.Marshal(c)
+func Write(cfg map[string]any, filepath string) (err error) {
+	text, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize config: %v", err)
 	}
@@ -47,17 +67,19 @@ func (c Config) Write(filepath string) (err error) {
 //
 // Thus, you can't get an integer back from a JSON number and any code that
 // needs an integer will have to do the conversion itself.
-func (c *Config) Read(filepath string) (err error) {
+func Read(filepath string) (c map[string]any, err error) {
 	text, err := os.ReadFile(filepath)
 	if err != nil {
-		return fmt.Errorf("Unable to read config file: %v", err)
+		err = fmt.Errorf("Unable to read config file: %v", err)
+		return
 	}
 	tmp := make(map[string]any)
 	err = json.Unmarshal(text, &tmp)
 	if err != nil {
-		return fmt.Errorf("Unable to parse config file: %v", err)
+		err = fmt.Errorf("Unable to parse config file: %v", err)
+		return
 	}
-	*c = tmp
+	c = tmp
 	return
 }
 
@@ -66,37 +88,37 @@ func (c *Config) Read(filepath string) (err error) {
 // It is added to target. If a key exists in both configurations, the value
 // from the source configuration is used. Keys that are only present in the
 // target configuration are not affected. Map values are updated recursively.
-func (c Config) Update(source Config) {
+func Update(source, target map[string]any) {
 	for k, v := range source {
 		switch v := v.(type) {
 		case map[string]any:
-			if _, ok := c[k]; ok {
+			if _, ok := target[k]; ok {
 				// If the key exists in both configurations, update the target
 				// recursively.
-				tmp := Config(c[k].(map[string]any))
-				tmp.Update(Config(v))
+				tmp := target[k].(map[string]any)
+				Update(v, tmp)
 			} else {
 				// If the key only exists in the source configuration, add it to
 				// the target
-				c[k] = v
+				target[k] = v
 			}
 		// If the value is not a map, i.e. a number, string, bool, null or array
 		// just add it to the target configuration, replacing the value if the
 		// key already exists.
 		default:
-			c[k] = v
+			target[k] = v
 		}
 	}
 }
 
 // HasKey returns true if the key exists in the configuration.
-func (c Config) HasKey(key string) bool {
+func HasKey(c map[string]any, key string) bool {
 	_, ok := c[key]
 	return ok
 }
 
 // HasKeyNested returns true if the nested key exists in the configuration.
-func (c Config) HasKeyNested(keys ...string) bool {
+func HasKeyNested(c map[string]any, keys ...string) bool {
 	var ok bool
 	var nestedMap = c
 	var value any
@@ -115,7 +137,7 @@ func (c Config) HasKeyNested(keys ...string) bool {
 
 // Get returns the value of a (nested) key in the configuration and a boolean
 // indicating whether the key exists.
-func (c Config) Get(keys ...string) (value any, ok bool) {
+func Get(c map[string]any, keys ...string) (value any, ok bool) {
 	nestedMap := c
 	for i, key := range keys {
 		value, ok = nestedMap[key]
@@ -123,10 +145,28 @@ func (c Config) Get(keys ...string) (value any, ok bool) {
 			return
 		}
 		if i < len(keys)-1 {
-			nestedMap = value.(map[string]any)
+			nestedMap = value.(map[string]interface{})
 		}
 	}
 	return
+}
+
+// Set sets the value of a (nested) key in the configuration. If the key does
+// not exist, it is added to the configuration. If the key exists, the value is
+// updated. If the key is nested, the nested map is created if it does not
+// exist.
+func Set(c map[string]any, value any, keys ...string) {
+	nestedMap := c
+	for i, key := range keys {
+		if i < len(keys)-1 {
+			if _, ok := nestedMap[key]; !ok {
+				nestedMap[key] = map[string]any{}
+			}
+			nestedMap = nestedMap[key].(map[string]any)
+		} else {
+			nestedMap[key] = value
+		}
+	}
 }
 
 // UniqueKeyMatchOf returns the unique key, if any, that matches the given
@@ -160,4 +200,61 @@ func (c Config) UniqueKeyMatchOf(k string, ignore []rune) string {
 	}
 
 	return match
+}
+
+type Translation map[string]string
+
+// Apply() interprets the keys and values of a Translation object
+// as paths to nested values in a Config object. It splits the keys
+// and values by the separator and then sets the values in cTo
+// to the corresponding values in cFrom.
+func (t Translation) Apply(cFrom, cTo map[string]any, sep string) error {
+	for k, v := range t {
+		toKeys := strings.Split(v, sep)
+		for i := range toKeys {
+			toKeys[i] = strings.TrimSpace(toKeys[i])
+		}
+		fromKeys := strings.Split(k, sep)
+		for i := range fromKeys {
+			fromKeys[i] = strings.TrimSpace(fromKeys[i])
+		}
+		fromV, ok := Get(cFrom, fromKeys...)
+		if !ok {
+			return fmt.Errorf("key %v not found in cFrom", fromKeys)
+		}
+		Set(cTo, fromV, toKeys...)
+
+	}
+	return nil
+}
+
+// CompareTypes compares the types of keys in two Config objects.  The function
+// compares the types of keys in the Config object with the keys in the reference
+// Config object.  The function returns two slices of strings.  The first slice
+// contains the keys where the types do not match.  The second slice contains the
+// keys that are in the Config object but not in the reference Config object.
+func (c Config) CompareTypes(refCfg Config, prefix string, mismatches *[]string, notFound *[]string) {
+	for key, value1 := range c {
+		// build prefix for nested keys
+		pfx := strings.Join([]string{prefix, key}, ":")
+		pfx = strings.TrimLeft(pfx, ":") // remove leading colon caused by empty prefix
+		// check if key exists in refCfg
+		if value2, ok := refCfg[key]; ok {
+			type1 := reflect.TypeOf(value1)
+			type2 := reflect.TypeOf(value2)
+			if type1 == type2 {
+				if reflect.ValueOf(value1).Kind() == reflect.Map {
+					// recurse into nested map
+					ck := value1.(Config)
+					ck.CompareTypes(value2.(Config), pfx, mismatches, notFound)
+				}
+			} else {
+				// found a type mismatch
+				*mismatches = append(*mismatches, fmt.Sprintf("%s:%s!=%s", pfx, type1, type2))
+			}
+		} else {
+			// key not found in map2
+			*notFound = append(*notFound, pfx)
+		}
+	}
 }

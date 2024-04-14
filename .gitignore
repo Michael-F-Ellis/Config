@@ -19,3 +19,8 @@
 
 # Go workspace file
 go.work
+
+# By convention, I keep a gonb.ipynb file in the root of my project.  This is a
+# Jupyter notebook that I use for experimentation. I don't want to include it in
+# my git repository, so I add it to my .gitignore file.
+gonb.ipynb
